@@ -3,15 +3,15 @@
   "upstreamRepository": "router-for-me/CLIProxyAPI",
   "imageRepository": "eceasy/cli-proxy-api",
   "current": {
+    "tag": "v7.2.152",
+    "digest": "sha256:02b3bb12d866cfc8255b5ee066eee86ad425669da6a79de5b55569eddbe48ba8",
+    "publishedAt": "2026-09-06T07:54:10Z",
+    "promotedAt": "2026-09-06T20:26:17Z"
+  },
+  "prior": {
     "tag": "v7.2.151",
     "digest": "sha256:9d3a608c20d386f5475a7c2ca01936e6441293168b639948f8ddbf8555ecc2b5",
     "publishedAt": "2026-09-04T20:03:46Z",
     "promotedAt": "2026-09-05T10:37:38Z"
-  },
-  "prior": {
-    "tag": "v7.2.149",
-    "digest": "sha256:0b6ee7f6e871dbbaa9bb072352f48149b3be05078dc2812c67c4fe1871d7d6ce",
-    "publishedAt": "2026-09-03T13:30:35Z",
-    "promotedAt": "2026-09-04T04:36:12Z"
   }
 }
