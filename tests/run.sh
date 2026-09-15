@@ -12,9 +12,11 @@ python3 -m unittest discover -s tests -p 'test_*.py' -v
 if command -v go >/dev/null 2>&1; then
   go test -race health-proxy.go health-proxy_test.go
   go vet health-proxy.go health-proxy_test.go
+  go test -race config-reconciler.go config-reconciler_test.go
+  go vet config-reconciler.go config-reconciler_test.go
 elif command -v docker >/dev/null 2>&1; then
   docker run --rm -v "$ROOT:/src:ro" -w /src golang:1.25.5-bookworm \
-    sh -c '/usr/local/go/bin/go test -race health-proxy.go health-proxy_test.go && /usr/local/go/bin/go vet health-proxy.go health-proxy_test.go'
+    sh -c '/usr/local/go/bin/go test -race health-proxy.go health-proxy_test.go && /usr/local/go/bin/go vet health-proxy.go health-proxy_test.go && /usr/local/go/bin/go test -race config-reconciler.go config-reconciler_test.go && /usr/local/go/bin/go vet config-reconciler.go config-reconciler_test.go'
 else
   printf '%s\n' 'Go runtime updater tests require Go or Docker' >&2
   exit 1

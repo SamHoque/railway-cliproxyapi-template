@@ -96,6 +96,8 @@ wait_health() {
     tries=$((tries + 1))
     sleep 0.25
   done
+  printf '%s\n' 'health check timed out; container diagnostics follow' >&2
+  docker inspect -f 'state={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}}' "$CONTAINER" >&2 || true
   return 1
 }
 

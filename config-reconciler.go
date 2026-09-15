@@ -118,6 +118,44 @@ type preservedConfig struct {
 	maxRetryInterval    *int
 }
 
+var supportedDiscoveryBlock = []byte(
+	"discovery:\n" +
+		"  service-type: _ai-gateway._tcp\n" +
+		"  subtypes:\n" +
+		"    - _chat-completions\n" +
+		"    - _responses\n" +
+		"    - _messages\n" +
+		"    - _generate-content\n" +
+		"    - _interactions\n",
+)
+
+// stripSupportedDiscovery removes only the exact default block written by the
+// v7.3.3 management API. The wrapper does not expose service discovery, and an
+// absent block selects the same upstream defaults. Any changed or duplicate
+// discovery block remains fail-closed instead of expanding the accepted YAML
+// surface.
+func stripSupportedDiscovery(input []byte) ([]byte, error) {
+	marker := []byte("discovery:\n")
+	if !bytes.Contains(input, marker) {
+		return input, nil
+	}
+	if bytes.Count(input, marker) != 1 {
+		return nil, errors.New("duplicate discovery block")
+	}
+	index := bytes.Index(input, marker)
+	if index > 0 && input[index-1] != '\n' {
+		return nil, errors.New("invalid discovery block position")
+	}
+	if !bytes.HasPrefix(input[index:], supportedDiscoveryBlock) {
+		return nil, errors.New("unsupported discovery block")
+	}
+	end := index + len(supportedDiscoveryBlock)
+	output := make([]byte, 0, len(input)-len(supportedDiscoveryBlock))
+	output = append(output, input[:index]...)
+	output = append(output, input[end:]...)
+	return output, nil
+}
+
 func renderConfig(proxyKey, managementKey string, preserved preservedConfig) []byte {
 	var output strings.Builder
 	output.WriteString(
@@ -437,6 +475,10 @@ func validateStrictConfig(config strictConfig) (preservedConfig, error) {
 }
 
 func reconcileConfig(input []byte, proxyKey, managementKey string) ([]byte, error) {
+	input, err := stripSupportedDiscovery(input)
+	if err != nil {
+		return nil, err
+	}
 	config, err := parseStrictConfig(input)
 	if err != nil {
 		return nil, err
