@@ -575,6 +575,12 @@ func validateStrictConfig(config strictConfig) (preservedConfig, error) {
 			return preservedConfig{}, errors.New("known scalar shape drift")
 		}
 	}
+	if node, exists := config.nodes["disable-cooling"]; exists {
+		disabled, err := parseBoolScalar(node)
+		if err != nil || disabled {
+			return preservedConfig{}, errors.New("disable-cooling must remain false")
+		}
+	}
 
 	debug, err := parseBoolScalar(config.nodes["debug"])
 	if err != nil {

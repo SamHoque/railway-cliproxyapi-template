@@ -127,6 +127,16 @@ func TestV738ManagementRewriteDefaultsAreAccepted(t *testing.T) {
 	}
 }
 
+func TestDisableCoolingTrueFailsClosed(t *testing.T) {
+	proxyKey := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	managementKey := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	input := append(configWithoutDiscovery(proxyKey, managementKey), []byte("disable-cooling: true\n")...)
+
+	if _, err := reconcileConfig(input, proxyKey, managementKey); err == nil {
+		t.Fatal("disable-cooling: true was accepted")
+	}
+}
+
 func TestUnsafeDiscoveryConfigsFailClosed(t *testing.T) {
 	proxyKey := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	managementKey := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
