@@ -95,7 +95,10 @@ func readSecretFIFO(path string, uid, gid int) (string, error) {
 }
 
 func initialConfig(proxyKey, managementKey string) []byte {
-	return renderConfig(proxyKey, managementKey, preservedConfig{debug: false})
+	return renderConfig(proxyKey, managementKey, preservedConfig{
+		debug:     false,
+		discovery: defaultDiscoveryConfig(),
+	})
 }
 
 type yamlNode struct {
@@ -116,44 +119,152 @@ type preservedConfig struct {
 	requestRetry        *int
 	maxRetryCredentials *int
 	maxRetryInterval    *int
+	discovery           *discoveryConfig
 }
 
-var supportedDiscoveryBlock = []byte(
-	"discovery:\n" +
-		"  service-type: _ai-gateway._tcp\n" +
-		"  subtypes:\n" +
-		"    - _chat-completions\n" +
-		"    - _responses\n" +
-		"    - _messages\n" +
-		"    - _generate-content\n" +
-		"    - _interactions\n",
-)
+type discoveryConfig struct {
+	enabled     *bool
+	serviceType string
+	subtypes    []string
+}
 
-// stripSupportedDiscovery removes only the exact default block written by the
-// v7.3.3 management API. The wrapper does not expose service discovery, and an
-// absent block selects the same upstream defaults. Any changed or duplicate
-// discovery block remains fail-closed instead of expanding the accepted YAML
-// surface.
-func stripSupportedDiscovery(input []byte) ([]byte, error) {
+func defaultDiscoveryConfig() *discoveryConfig {
+	return &discoveryConfig{
+		serviceType: "_ai-gateway._tcp",
+		subtypes: []string{
+			"_chat-completions",
+			"_responses",
+			"_messages",
+			"_generate-content",
+			"_interactions",
+		},
+	}
+}
+
+func validDiscoveryServiceType(value string) bool {
+	if len(value) < len("_a._tcp") || len(value) > len("_abcdefghijklmno._tcp") ||
+		!strings.HasPrefix(value, "_") || !strings.HasSuffix(value, "._tcp") {
+		return false
+	}
+	name := value[1 : len(value)-len("._tcp")]
+	if len(name) < 1 || len(name) > 15 || name[0] == '-' || name[len(name)-1] == '-' {
+		return false
+	}
+	for _, char := range name {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func validDiscoverySubtype(value string) bool {
+	if len(value) < 2 || len(value) > 63 || value[0] != '_' {
+		return false
+	}
+	label := value[1:]
+	if label[0] == '-' || label[len(label)-1] == '-' {
+		return false
+	}
+	for _, char := range label {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func parseDiscoveryBlock(block []byte) (*discoveryConfig, error) {
+	if len(block) == 0 || block[len(block)-1] != '\n' {
+		return nil, errors.New("invalid discovery block")
+	}
+	lines := strings.Split(string(block[:len(block)-1]), "\n")
+	index := 0
+	discovery := &discoveryConfig{}
+	if index < len(lines) && strings.HasPrefix(lines[index], "  enabled: ") {
+		value := strings.TrimPrefix(lines[index], "  enabled: ")
+		if value != "true" && value != "false" {
+			return nil, errors.New("invalid discovery enabled flag")
+		}
+		enabled := value == "true"
+		discovery.enabled = &enabled
+		index++
+	}
+	if index >= len(lines) || !strings.HasPrefix(lines[index], "  service-type: ") {
+		return nil, errors.New("missing discovery service type")
+	}
+	serviceType, err := parseScalar(strings.TrimPrefix(lines[index], "  service-type: "))
+	if err != nil || !validDiscoveryServiceType(serviceType) {
+		return nil, errors.New("invalid discovery service type")
+	}
+	discovery.serviceType = serviceType
+	index++
+	if index >= len(lines) || lines[index] != "  subtypes:" {
+		return nil, errors.New("missing discovery subtypes")
+	}
+	index++
+	seen := make(map[string]bool)
+	for index < len(lines) {
+		if !strings.HasPrefix(lines[index], "    - ") {
+			return nil, errors.New("unsupported discovery field")
+		}
+		subtype, err := parseScalar(strings.TrimPrefix(lines[index], "    - "))
+		if err != nil || !validDiscoverySubtype(subtype) || seen[subtype] {
+			return nil, errors.New("invalid discovery subtype")
+		}
+		seen[subtype] = true
+		discovery.subtypes = append(discovery.subtypes, subtype)
+		if len(discovery.subtypes) > 16 {
+			return nil, errors.New("too many discovery subtypes")
+		}
+		index++
+	}
+	if len(discovery.subtypes) == 0 {
+		return nil, errors.New("empty discovery subtypes")
+	}
+	return discovery, nil
+}
+
+// extractSupportedDiscovery isolates the bounded discovery schema before the
+// legacy strict parser, then renderConfig writes it back canonically. This
+// preserves discovery settings while keeping nested YAML and unknown fields
+// outside the accepted configuration surface.
+func extractSupportedDiscovery(input []byte) ([]byte, *discoveryConfig, error) {
 	marker := []byte("discovery:\n")
 	if !bytes.Contains(input, marker) {
-		return input, nil
+		return input, nil, nil
 	}
 	if bytes.Count(input, marker) != 1 {
-		return nil, errors.New("duplicate discovery block")
+		return nil, nil, errors.New("duplicate discovery block")
 	}
 	index := bytes.Index(input, marker)
 	if index > 0 && input[index-1] != '\n' {
-		return nil, errors.New("invalid discovery block position")
+		return nil, nil, errors.New("invalid discovery block position")
 	}
-	if !bytes.HasPrefix(input[index:], supportedDiscoveryBlock) {
-		return nil, errors.New("unsupported discovery block")
+	bodyStart := index + len(marker)
+	end := len(input)
+	for cursor := bodyStart; cursor < len(input); {
+		next := bytes.IndexByte(input[cursor:], '\n')
+		if next < 0 {
+			return nil, nil, errors.New("unterminated discovery block")
+		}
+		lineEnd := cursor + next + 1
+		if input[cursor] != ' ' {
+			end = cursor
+			break
+		}
+		cursor = lineEnd
 	}
-	end := index + len(supportedDiscoveryBlock)
-	output := make([]byte, 0, len(input)-len(supportedDiscoveryBlock))
+	discovery, err := parseDiscoveryBlock(input[bodyStart:end])
+	if err != nil {
+		return nil, nil, err
+	}
+	output := make([]byte, 0, len(input)-(end-index))
 	output = append(output, input[:index]...)
 	output = append(output, input[end:]...)
-	return output, nil
+	return output, discovery, nil
 }
 
 func renderConfig(proxyKey, managementKey string, preserved preservedConfig) []byte {
@@ -176,6 +287,17 @@ func renderConfig(proxyKey, managementKey string, preserved preservedConfig) []b
 			"usage-statistics-enabled: false\n" +
 			"ws-auth: true\n",
 	)
+	if preserved.discovery != nil {
+		output.WriteString("discovery:\n")
+		if preserved.discovery.enabled != nil {
+			output.WriteString("  enabled: " + strconv.FormatBool(*preserved.discovery.enabled) + "\n")
+		}
+		output.WriteString("  service-type: " + preserved.discovery.serviceType + "\n")
+		output.WriteString("  subtypes:\n")
+		for _, subtype := range preserved.discovery.subtypes {
+			output.WriteString("    - " + subtype + "\n")
+		}
+	}
 	for _, field := range []struct {
 		name  string
 		value *int
@@ -391,7 +513,8 @@ func validateStrictConfig(config strictConfig) (preservedConfig, error) {
 		"auth-dir": true, "api-keys": true, "debug": true,
 		"logging-to-file": true, "usage-statistics-enabled": true,
 		"credential-concurrency": true, "credential-in-flight": true,
-		"redis-usage-queue-retention-seconds": true, "ws-auth": true,
+		"redis-usage-queue-retention-seconds": true, "disable-cooling": true,
+		"ws-auth": true,
 		"request-retry": true, "max-retry-credentials": true,
 		"max-retry-interval": true,
 	}
@@ -445,7 +568,7 @@ func validateStrictConfig(config strictConfig) (preservedConfig, error) {
 		}
 	}
 	for _, name := range []string{
-		"redis-usage-queue-retention-seconds", "ws-auth",
+		"redis-usage-queue-retention-seconds", "disable-cooling", "ws-auth",
 		"request-retry", "max-retry-credentials", "max-retry-interval",
 	} {
 		if node, exists := config.nodes[name]; exists && node.kind != "scalar" {
@@ -475,7 +598,7 @@ func validateStrictConfig(config strictConfig) (preservedConfig, error) {
 }
 
 func reconcileConfig(input []byte, proxyKey, managementKey string) ([]byte, error) {
-	input, err := stripSupportedDiscovery(input)
+	input, discovery, err := extractSupportedDiscovery(input)
 	if err != nil {
 		return nil, err
 	}
@@ -487,6 +610,10 @@ func reconcileConfig(input []byte, proxyKey, managementKey string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
+	if discovery == nil {
+		discovery = defaultDiscoveryConfig()
+	}
+	preserved.discovery = discovery
 	return renderConfig(proxyKey, managementKey, preserved), nil
 }
 

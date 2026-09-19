@@ -122,6 +122,11 @@ class StaticContractTests(unittest.TestCase):
             'tests/run.sh "${{ steps.prepare.outputs.smoke_mode }}"', workflow
         )
         self.assertIn(
+            'inspect_decision=$(sh scripts/inspect_image_manifest.sh', workflow
+        )
+        self.assertIn('defer:image-not-ready', workflow)
+        self.assertIn('[[ "$inspect_decision" == "ready" ]]', workflow)
+        self.assertIn(
             "if: success() && steps.prepare.outputs.changed == 'true'", workflow
         )
         self.assertIn(
@@ -156,8 +161,12 @@ class StaticContractTests(unittest.TestCase):
             "api key cardinality drift",
             '"host: \\"127.0.0.1\\"',
             '"ws-auth: true',
+            "extractSupportedDiscovery",
+            "defaultDiscoveryConfig",
+            "too many discovery subtypes",
         ):
             self.assertIn(required, reconciler)
+        self.assertNotIn("stripSupportedDiscovery", reconciler)
         health_proxy = (ROOT / "health-proxy.go").read_text()
         self.assertIn('"/data/state/config.yaml"', health_proxy)
         self.assertNotIn('"/run/cliproxy/config.yaml"', health_proxy)

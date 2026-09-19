@@ -22,7 +22,7 @@ else
   exit 1
 fi
 if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck entrypoint.sh tests/test_preflight.sh tests/test_runtime_updates.sh tests/run.sh
+  shellcheck entrypoint.sh scripts/inspect_image_manifest.sh tests/test_preflight.sh tests/test_runtime_updates.sh tests/run.sh
 fi
 if [ "${SKIP_DOCKER_TESTS:-0}" != "1" ]; then
   tests/test_preflight.sh "$MODE"

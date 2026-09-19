@@ -76,7 +76,22 @@ jobs:
 
           raw_manifest=$(mktemp)
           trap 'rm -f "$raw_manifest"' EXIT
-          docker buildx imagetools inspect "${IMAGE_REPOSITORY}:${tag}" --raw > "$raw_manifest"
+          image_ref="${IMAGE_REPOSITORY}:${tag}"
+          inspect_decision=$(sh scripts/inspect_image_manifest.sh "$image_ref" "$raw_manifest")
+          if [[ "$inspect_decision" == "defer:image-not-ready" ]]; then
+            echo "release-controller decision=${inspect_decision} candidate=${tag} image=${image_ref}"
+            {
+              echo "### Stable upstream release controller"
+              echo
+              echo "- Candidate: \`${tag}\`"
+              echo "- Image: \`${image_ref}\`"
+              echo "- Decision: \`${inspect_decision}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "summary=${inspect_decision}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ "$inspect_decision" == "ready" ]]
           digest="sha256:$(sha256sum "$raw_manifest" | awk '{print $1}')"
 
           result=$(python3 scripts/release_controller.py check \

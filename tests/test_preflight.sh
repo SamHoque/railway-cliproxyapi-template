@@ -192,6 +192,13 @@ check_runtime() {
     test "$(stat -c "%u:%g:%a" /data/update/bin/embedded)" = "10001:10001:755"
     test "$(stat -c "%u:%g:%a" /data/update/bin/current)" = "10001:10001:755"
     test "$(stat -c "%u:%g:%a" /data/auth/preflight-marker)" = "10001:10001:600"
+    grep -Fx "discovery:" /data/state/config.yaml >/dev/null
+    grep -Fx "  service-type: _ai-gateway._tcp" /data/state/config.yaml >/dev/null
+    grep -Fx "    - _chat-completions" /data/state/config.yaml >/dev/null
+    grep -Fx "    - _responses" /data/state/config.yaml >/dev/null
+    grep -Fx "    - _messages" /data/state/config.yaml >/dev/null
+    grep -Fx "    - _generate-content" /data/state/config.yaml >/dev/null
+    grep -Fx "    - _interactions" /data/state/config.yaml >/dev/null
     test ! -e /run/cliproxy/config.yaml
     test "$(find /data/state -maxdepth 1 -name ".config.yaml.tmp.*" -print -quit)" = ""
     test "$(find /data -xdev ! -user 10001 -print -quit)" = ""
