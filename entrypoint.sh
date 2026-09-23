@@ -47,6 +47,7 @@ done
 
 install -d -m 0700 -o "$APP_UID" -g "$APP_GID" \
   "$DATA_DIR/auth" "$DATA_DIR/home" "$STATE_DIR" "$DATA_DIR/update"
+install -d -m 0700 -o "$APP_UID" -g "$APP_GID" "$DATA_DIR/home/.cli-proxy-api"
 chown "$APP_UID:$APP_GID" "$DATA_DIR"
 chmod 0750 "$DATA_DIR"
 
