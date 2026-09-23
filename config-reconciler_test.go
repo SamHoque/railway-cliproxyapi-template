@@ -179,3 +179,32 @@ func TestDuplicateDiscoveryBlockFailsClosed(t *testing.T) {
 		t.Fatal("duplicate discovery block was accepted")
 	}
 }
+
+func TestPluginsBlockRoundTripsWithPinnedDir(t *testing.T) {
+	proxyKey := strings.Repeat("p", 40)
+	managementKey := strings.Repeat("m", 40)
+	plugins := "plugins:\n" +
+		"  enabled: false\n" +
+		"  dir: plugins\n" +
+		"  configs:\n" +
+		"    usage-report:\n" +
+		"      enabled: true\n" +
+		"      db_path: \"~/.cli-proxy-api/usage-report/usage.sqlite\"\n"
+	input := bytes.Replace(configWithoutDiscovery(proxyKey, managementKey),
+		[]byte("plugins:\n  enabled: true\n  dir: \"/data/plugins\"\n"), []byte(plugins), 1)
+	first, err := reconcileConfig(input, proxyKey, managementKey)
+	if err != nil {
+		t.Fatalf("plugins config rejected: %v", err)
+	}
+	want := "plugins:\n  enabled: true\n  dir: \"/data/plugins\"\n  configs:\n    usage-report:\n      enabled: true\n"
+	if !bytes.Contains(first, []byte(want)) || bytes.Contains(first, []byte("dir: plugins")) {
+		t.Fatalf("plugins block not pinned and preserved:\n%s", first)
+	}
+	second, err := reconcileConfig(first, proxyKey, managementKey)
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("plugins config not stable across reconciles: %v", err)
+	}
+	if _, err := reconcileConfig(append(first, []byte(plugins)...), proxyKey, managementKey); err == nil {
+		t.Fatal("duplicate plugins block accepted")
+	}
+}

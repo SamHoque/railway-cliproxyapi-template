@@ -120,6 +120,7 @@ type preservedConfig struct {
 	maxRetryCredentials *int
 	maxRetryInterval    *int
 	discovery           *discoveryConfig
+	pluginsBody         []byte
 }
 
 type discoveryConfig struct {
@@ -267,6 +268,49 @@ func extractSupportedDiscovery(input []byte) ([]byte, *discoveryConfig, error) {
 	return output, discovery, nil
 }
 
+// extractPlugins lifts the plugins block out before the strict parser and keeps
+// its nested body verbatim, minus enabled/dir which renderConfig pins so the
+// plugin directory always lands on the writable /data volume.
+func extractPlugins(input []byte) ([]byte, []byte, error) {
+	marker := []byte("plugins:\n")
+	lineMarker := []byte("\nplugins:\n")
+	index := 0
+	if !bytes.HasPrefix(input, marker) {
+		index = bytes.Index(input, lineMarker)
+		if index < 0 {
+			return input, nil, nil
+		}
+		index++
+	}
+	bodyStart := index + len(marker)
+	end := len(input)
+	var body []byte
+	for cursor := bodyStart; cursor < len(input); {
+		next := bytes.IndexByte(input[cursor:], '\n')
+		if next < 0 {
+			return nil, nil, errors.New("unterminated plugins block")
+		}
+		lineEnd := cursor + next + 1
+		if input[cursor] != ' ' {
+			end = cursor
+			break
+		}
+		line := input[cursor:lineEnd]
+		if !bytes.HasPrefix(line, []byte("  enabled:")) && !bytes.HasPrefix(line, []byte("  dir:")) {
+			body = append(body, line...)
+		}
+		cursor = lineEnd
+	}
+	rest := append(append([]byte{}, input[:index]...), input[end:]...)
+	if bytes.HasPrefix(rest, marker) || bytes.Contains(rest, lineMarker) {
+		return nil, nil, errors.New("duplicate plugins block")
+	}
+	if !utf8.Valid(body) {
+		return nil, nil, errors.New("invalid plugins block encoding")
+	}
+	return rest, body, nil
+}
+
 func renderConfig(proxyKey, managementKey string, preserved preservedConfig) []byte {
 	var output strings.Builder
 	output.WriteString(
@@ -287,6 +331,8 @@ func renderConfig(proxyKey, managementKey string, preserved preservedConfig) []b
 			"usage-statistics-enabled: false\n" +
 			"ws-auth: true\n",
 	)
+	output.WriteString("plugins:\n  enabled: true\n  dir: \"/data/plugins\"\n")
+	output.Write(preserved.pluginsBody)
 	if preserved.discovery != nil {
 		output.WriteString("discovery:\n")
 		if preserved.discovery.enabled != nil {
@@ -514,7 +560,7 @@ func validateStrictConfig(config strictConfig) (preservedConfig, error) {
 		"logging-to-file": true, "usage-statistics-enabled": true,
 		"credential-concurrency": true, "credential-in-flight": true,
 		"redis-usage-queue-retention-seconds": true, "disable-cooling": true,
-		"ws-auth": true,
+		"ws-auth":       true,
 		"request-retry": true, "max-retry-credentials": true,
 		"max-retry-interval": true,
 	}
@@ -604,6 +650,10 @@ func validateStrictConfig(config strictConfig) (preservedConfig, error) {
 }
 
 func reconcileConfig(input []byte, proxyKey, managementKey string) ([]byte, error) {
+	input, pluginsBody, err := extractPlugins(input)
+	if err != nil {
+		return nil, err
+	}
 	input, discovery, err := extractSupportedDiscovery(input)
 	if err != nil {
 		return nil, err
@@ -620,6 +670,7 @@ func reconcileConfig(input []byte, proxyKey, managementKey string) ([]byte, erro
 		discovery = defaultDiscoveryConfig()
 	}
 	preserved.discovery = discovery
+	preserved.pluginsBody = pluginsBody
 	return renderConfig(proxyKey, managementKey, preserved), nil
 }
 
